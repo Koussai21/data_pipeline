@@ -45,6 +45,11 @@ def create_database(path):
     return conn
 
 
+def hash_contenu(contenu):
+    """Calcule le SHA-256 d'un contenu en mémoire (octets), ex. un objet lu depuis S3."""
+    return hashlib.sha256(contenu).hexdigest()
+
+
 def hash_fichier(path):
     """Calcule le SHA-256 du contenu d'un fichier."""
     h = hashlib.sha256()

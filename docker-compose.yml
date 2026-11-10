@@ -1,0 +1,14 @@
+# Stockage S3 local (RustFS) utilisé par le pipeline
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: pipeline-rustfs
+    ports:
+      - "9000:9000"
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+    volumes:
+      - rustfs-data:/data
+volumes:
+  rustfs-data:

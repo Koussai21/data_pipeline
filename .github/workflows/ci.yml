@@ -12,5 +12,16 @@ jobs:
           python-version: "3.12"
       - name: Installer les dépendances
         run: pip install -r requirements.txt
+      - name: Démarrer le stockage S3 local (RustFS)
+        run: |
+          docker compose up -d
+          # attente de la disponibilité du serveur (max 60 s)
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null http://localhost:9000/ && break
+            sleep 1
+          done
       - name: Lancer les tests
         run: pytest -v
+      - name: Logs RustFS en cas d'échec
+        if: failure()
+        run: docker compose logs rustfs

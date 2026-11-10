@@ -3,7 +3,7 @@ import pandas as pd
 
 
 def load_transactions(path):
-    """Lit un CSV et retourne une liste de dictionnaires (un par transaction).
+    """Lit un CSV (chemin ou objet fichier, ex. BytesIO lu depuis S3) et retourne une liste de dictionnaires (un par transaction).
 
     Le montant est converti en float. Lève FileNotFoundError si le fichier
     n'existe pas.
