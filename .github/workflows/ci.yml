@@ -5,12 +5,30 @@ on: [push]
 jobs:
   tests:
     runs-on: ubuntu-latest
+    env:
+      CI: "true"
+      TEST_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    # PostgreSQL pour les tests d'intégration du niveau 3
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Installer les dépendances
+      - name: Installer Tesseract (OCR) et une police
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr fonts-dejavu-core
+      - name: Installer les dépendances Python
         run: pip install -r requirements.txt
       - name: Démarrer le stockage S3 local (RustFS)
         run: |
@@ -20,8 +38,10 @@ jobs:
             curl -s -o /dev/null http://localhost:9000/ && break
             sleep 1
           done
-      - name: Lancer les tests
+      - name: Lancer les tests (niveaux 1, 2 et 3)
         run: pytest -v
+      - name: Vérifier que l'image Docker se construit
+        run: docker build -t pipeline-app:ci .
       - name: Logs RustFS en cas d'échec
         if: failure()
         run: docker compose logs rustfs

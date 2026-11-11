@@ -31,28 +31,6 @@ def conn(tmp_path):
     c.close()
 
 
-@pytest.fixture(scope="session")
-def s3_client():
-    """Client S3 vers RustFS ; démarre le serveur si besoin (skip en local s'il est indisponible)."""
-    try:
-        return s3_store.start_store()
-    except S3Error as e:
-        if os.environ.get("CI"):
-            raise  # en CI, l'absence de S3 est une vraie erreur
-        pytest.skip(f"S3 local indisponible : {e}")
-
-
-@pytest.fixture
-def bucket(s3_client):
-    """Bucket unique par test, vidé et supprimé à la fin."""
-    nom = f"test-{uuid.uuid4().hex[:12]}"
-    s3_store.create_bucket(s3_client, nom)
-    yield nom
-    for cle in s3_store.list_csv_keys(s3_client, nom):
-        s3_client.delete_object(Bucket=nom, Key=cle)
-    s3_client.delete_bucket(Bucket=nom)
-
-
 def _results(chemin):
     tx = load_transactions(chemin)
     return {
@@ -182,8 +160,8 @@ def test_retry_abandon_propre(conn, csv_files):
 
 def test_pipeline_bout_en_bout_idempotent(tmp_path, s3_client, bucket):
     data, db = str(tmp_path / "d"), str(tmp_path / "p.db")
-    assert run_pipeline(data, db, bucket, delai=0) == 3
-    assert run_pipeline(data, db, bucket, delai=0) == 0  # relance : rien de retraité
+    assert run_pipeline(data, db, bucket, delai=0, avec_images=False) == 3
+    assert run_pipeline(data, db, bucket, delai=0, avec_images=False) == 0  # relance : rien de retraité
     c = sqlite3.connect(db)
     assert c.execute("SELECT COUNT(*) FROM fichiers_traites").fetchone()[0] == 3
     c.close()

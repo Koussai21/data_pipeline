@@ -1,3 +1,7 @@
 pandas
 boto3
 pytest
+psycopg[binary]
+pytesseract
+Pillow
+apscheduler
