@@ -2,14 +2,11 @@
 import io
 import re
 import shutil
-from datetime import datetime
 
 from PIL import Image
 
-CHAMPS = [
-    "datetime_transaction", "iban_origine", "pays_source", "banque_source",
-    "iban_destinataire", "pays_destinataire", "montant",
-]
+# Les règles de validation vivent dans validation/ (source unique, partagée avec les CSV)
+from validation.validation import CHAMPS, IBAN_RE, ValidationError, valider_transaction  # noqa: F401
 
 # Un motif par champ : "Libellé : valeur" sur une ligne.
 MOTIFS = {
@@ -21,8 +18,6 @@ MOTIFS = {
     "pays_destinataire": r"Pays\s+destinataire\s*:\s*([A-Za-z]{2})\b",
     "montant": r"Montant\s*:\s*([0-9][0-9 .,]*)",
 }
-
-IBAN_RE = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$")
 
 
 class OcrError(Exception):
@@ -85,22 +80,18 @@ def parse_transaction(text):
         transaction["montant"] = _normaliser_montant(trouve["montant"])
     except ValueError:
         raise OcrError(f"Montant illisible : '{trouve['montant']}'")
-    validate_transaction(transaction)
-    return transaction
+    return validate_transaction(transaction)
 
 
 def validate_transaction(t):
-    """Contrôles : format IBAN, montant positif, date valide. Lève OcrError sinon."""
-    for champ in ("iban_origine", "iban_destinataire"):
-        if not IBAN_RE.match(t[champ]):
-            raise OcrError(f"IBAN invalide ({champ}) : '{t[champ]}'")
-    if not t["montant"] > 0:
-        raise OcrError(f"Montant non positif : {t['montant']}")
+    """Valide via le module validation/ et retourne la transaction normalisée.
+
+    Les erreurs de validation sont encapsulées en OcrError (message conservé).
+    """
     try:
-        datetime.strptime(t["datetime_transaction"], "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        raise OcrError(f"Date invalide : '{t['datetime_transaction']}'")
-    return t
+        return valider_transaction(t)
+    except ValidationError as e:
+        raise OcrError(str(e))
 
 
 def load_transaction_from_image(source):

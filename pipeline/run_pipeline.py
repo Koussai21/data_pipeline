@@ -25,6 +25,7 @@ from processing.processing import (
 from ocr import ocr
 from storage import s3_store
 from storage.s3_store import S3Error
+from validation.validation import ValidationError, valider_transactions
 
 
 class PipelineError(Exception):
@@ -55,9 +56,13 @@ def inserer_avec_retry(conn, results, hash_f, nom_fichier,
 
 
 def extraire_transactions(cle, contenu):
-    """Transforme le contenu d'un objet S3 en liste de transactions (CSV direct, image via OCR)."""
+    """Transforme le contenu d'un objet S3 en liste de transactions VALIDÉES.
+
+    CSV : chargement puis validation (ValidationError si une ligne est invalide).
+    Image : OCR, qui applique les mêmes règles (OcrError sinon).
+    """
     if cle.lower().endswith(".csv"):
-        return load_transactions(io.BytesIO(contenu))
+        return valider_transactions(load_transactions(io.BytesIO(contenu), nom_fichier=cle), cle)
     return ocr.load_transaction_from_image(contenu)
 
 
@@ -65,7 +70,8 @@ def traiter_objet(conn, client, bucket, cle, max_tentatives=3, delai=1.0, lecteu
     """Lit un objet (CSV ou image) depuis S3 avec retry, le traite et l'insère.
 
     Retourne False s'il avait déjà été traité (même hash). Une image illisible
-    lève OcrError (le fichier n'est alors PAS marqué comme traité).
+    lève OcrError, et un CSV invalide ValidationError : dans les deux cas rien n'est
+    inséré et le fichier n'est PAS marqué comme traité (il sera repris s'il est corrigé).
     """
     contenu = s3_store.get_with_retry(
         client, bucket, cle, max_tentatives, delai,
@@ -105,7 +111,7 @@ def traiter_bucket(client, bucket, db_cible, max_tentatives=3, delai=1.0, lecteu
         for cle in cles:
             try:
                 nouveaux += traiter_objet(conn, client, bucket, cle, max_tentatives, delai, lecteur)
-            except ocr.OcrError as e:  # image invalide : on la signale et on continue
+            except (ocr.OcrError, ValidationError) as e:  # fichier invalide : signalé, on continue
                 print(f"[INVALIDE] {cle} ignoré : {e}")
         return nouveaux
     finally:

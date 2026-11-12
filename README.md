@@ -10,8 +10,10 @@ Pipeline Python qui ingère des transactions financières depuis des **CSV** et 
  CSV générés ──┐                                   ┌──> sommes par IBAN / banque
                ├─> S3 (RustFS) ─> lecture + hash ─>├──> drapeau gros montants (> 5000)
  Images PNG ───┘   images/        (retry, anti-     └──> base de données (SQLite | PostgreSQL)
-   └─ OCR (Tesseract) + validation     doublon)           tables resultats / transactions /
+   └─ OCR (Tesseract)                doublon)             tables resultats / transactions /
                                                            fichiers_traites
+ Flux : Source -> Chargement -> VALIDATION -> Traitement -> Base
+        (CSV et OCR passent par les mêmes règles, définies dans validation/)
  Planificateur (APScheduler) : un cycle toutes les N minutes sur les NOUVEAUX fichiers du bucket
 ```
 
@@ -20,7 +22,8 @@ Pipeline Python qui ingère des transactions financières depuis des **CSV** et 
 | `storage/` | S3 local : démarrage, bucket, envoi, vérification, lecture avec retry |
 | `generation/` | génère 3 CSV déterministes |
 | `ocr/` | `extract_text`, `parse_transaction` (+ validation IBAN/montant/date), génération d'images de test |
-| `loading/` | `load_transactions` : CSV -> liste de dicts |
+| `loading/` | `load_transactions` : CSV -> liste de dicts (erreur claire si CSV vide / colonne manquante / montant illisible) |
+| `validation/` | règles de validation uniques (CSV + OCR) : `valider_transaction`, `valider_transactions` |
 | `processing/` | fonctions pures (sommes, `flag_large_amounts`) |
 | `database/` | SQLite **ou** PostgreSQL (selon `DATABASE_URL`), insertion atomique, `fichiers_traites` |
 | `pipeline/` | `run_pipeline.py` (orchestration + retry), `scheduler.py` (cycles réguliers) |
@@ -31,8 +34,33 @@ Pipeline Python qui ingère des transactions financières depuis des **CSV** et 
 **Anti-doublon** : chaque fichier (CSV ou image) est identifié par le SHA-256 de son contenu,
 enregistré dans `fichiers_traites` (clé primaire) dans la même transaction que ses résultats.
 
+**Validation** : voir la section ci-dessous.
+
 **Retry** : lecture S3 et insertion en base réessaient (3 fois, 1 s d'attente par défaut), affichent l'erreur,
 puis s'arrêtent proprement (code 1).
+
+## Validation des données
+
+Le module `validation/validation.py` est la **source unique** des règles ; le chargement CSV et l'OCR l'utilisent.
+
+| Champ | Règle |
+|---|---|
+| colonnes | les 7 colonnes de `generation/generate_csv.py`, toutes obligatoires et non vides |
+| `iban_origine`, `iban_destinataire` | espaces retirés, majuscules, puis 2 lettres + 2 chiffres + 11 à 30 caractères alphanumériques |
+| `pays_source`, `pays_destinataire` | exactement 2 lettres (mises en majuscules) |
+| `montant` | numérique et strictement positif |
+| `datetime_transaction` | format `YYYY-MM-DD HH:MM:SS`, date réelle |
+
+**Comportement `[INVALIDE]` (CSV)** : si une seule ligne est invalide (ou si le CSV est vide, illisible, sans une
+colonne, ou avec un montant non numérique), le fichier est **rejeté en entier** :
+- aucune ligne n'est insérée (pas même les lignes valides) ;
+- le fichier n'est **pas** enregistré dans `fichiers_traites` (son hash reste inconnu, donc pas d'anti-doublon) ;
+- le pipeline affiche `[INVALIDE] fichier.csv ignoré : …` avec fichier, ligne, champ et raison de **toutes** les
+  lignes en erreur, puis continue avec les fichiers suivants ;
+- si le fichier est corrigé (son contenu, donc son hash, change), il est traité normalement au cycle suivant.
+  Tant qu'il n'est pas corrigé, il est signalé à chaque cycle.
+
+Les images suivent la même politique (`OcrError` côté OCR, mêmes règles de validation).
 
 ## Développement
 
@@ -114,8 +142,12 @@ docker compose down -v        # arrête ET supprime les données (volume rustfs-
 ### 3. Vérifier que le S3 répond
 
 ```bash
-curl -i http://localhost:9000/   # toute réponse HTTP (même 403) prouve que le serveur est up
+curl -i http://localhost:9000/health   # "200 OK" = serveur en bonne santé
+curl -i http://localhost:9000/         # "403 AccessDenied" (XML) est NORMAL : requête S3 sans identifiants
 ```
+
+Un `AccessDenied` renvoyé par `curl` vient du serveur S3 (requête non authentifiée), pas des droits Docker.
+Un problème de groupe Docker s'affiche sur la commande `docker`, sous la forme `permission denied ... docker.sock`.
 
 Identifiants par défaut : `rustfsadmin` / `rustfsadmin`. Ils peuvent être changés dans
 `docker-compose.yml` ; il faut alors définir les variables d'environnement
